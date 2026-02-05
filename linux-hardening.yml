@@ -1,0 +1,91 @@
+---
+- name: Harden Linux server and create privileged user
+  hosts: all
+  become: yes
+
+  vars:
+    new_user: "subhan"
+
+  tasks:
+
+    - name: Ensure system packages are up to date
+      package:
+        name: "*"
+        state: latest
+
+    - name: Install common security tools
+      package:
+        name:
+          - fail2ban
+          - ufw
+          - unattended-upgrades
+        state: present
+
+    - name: Create group for sudo access
+      group:
+        name: sudo
+        state: present
+
+    - name: Create user account
+      user:
+        name: "{{ new_user }}"
+        groups: sudo
+        append: yes
+        shell: /bin/bash
+        create_home: yes
+
+    - name: Set authorized SSH key for the user
+      authorized_key:
+        user: "{{ new_user }}"
+        state: present
+        key: "{{ lookup('file', 'id_rsa.pub') }}"
+
+    - name: Disable root SSH login
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "^PermitRootLogin"
+        line: "PermitRootLogin no"
+
+    - name: Disable password authentication
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "^PasswordAuthentication"
+        line: "PasswordAuthentication no"
+
+    - name: Restart SSH service
+      service:
+        name: sshd
+        state: restarted
+
+    - name: Enable UFW firewall
+      ufw:
+        state: enabled
+        policy: deny
+
+    - name: Allow SSH through firewall
+      ufw:
+        rule: allow
+        port: 22
+        proto: tcp
+
+    - name: Enable automatic security updates
+      copy:
+        dest: /etc/apt/apt.conf.d/20auto-upgrades
+        content: |
+          APT::Periodic::Update-Package-Lists "1";
+          APT::Periodic::Unattended-Upgrade "1";
+
+    - name: Configure fail2ban with basic SSH protection
+      copy:
+        dest: /etc/fail2ban/jail.local
+        content: |
+          [sshd]
+          enabled = true
+          port = ssh
+          logpath = /var/log/auth.log
+          maxretry = 5
+
+    - name: Restart fail2ban
+      service:
+        name: fail2ban
+        state: restarted
